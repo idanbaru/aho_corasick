@@ -50,6 +50,11 @@ ENABLE_STDCXX11 ()
 #
 # Recurse source sub-directories
 #
-ENABLE_TESTING (true)
+OPTION(BUILD_TESTS "Build tests" ON)
+IF(BUILD_TESTS)
+	ENABLE_TESTING (true)
+	ADD_SUBDIRECTORY (test)
+ENDIF()
+
 ADD_SUBDIRECTORY (src)
-ADD_SUBDIRECTORY (test)
+
