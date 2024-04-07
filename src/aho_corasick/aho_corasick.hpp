@@ -20,6 +20,8 @@
 * SOFTWARE.
 */
 
+// Revised by Idan Baruch & Itai Benyamin. Up to date: 03/04/24.
+
 #ifndef AHO_CORASICK_HPP
 #define AHO_CORASICK_HPP
 
@@ -35,9 +37,18 @@
 #include <mutex>
 #include <atomic>
 
+
 namespace aho_corasick {
 
-	// class interval
+// Default configurations for the behavior of the aho-corasick trie tree.
+// Change using trie.config...
+const bool DEFAULT_OVERLAPS = true;
+const bool DEFAULT_WHOLE_WORDS = false;
+const bool DEFAULT_INSENSITIVE = true;
+
+	/// <summary>
+	///		Class Interval represents an interval of [d_start, d_end].
+	/// </summary>
 	class interval {
 		size_t d_start;
 		size_t d_end;
@@ -72,7 +83,18 @@ namespace aho_corasick {
 		}
 	};
 
-	// class interval_tree
+
+	/// <summary>
+	/// 	The interval_tree class is a data structure used for storing and querying intervals.
+	///		It's implemented as a binary tree where each node represents a range of values and contains intervals that overlap with that range.
+	///		It includes:
+	///		    interval_collection: This is an alias for std::vector<T>, where T represents the type of intervals stored in the tree.
+	///			node class: A class representing a node in the binary tree. 
+	///				Each node contains a point (d_point) which represents the median value of the intervals it contains, 
+	///				left and right child nodes (d_left and d_right), and a collection of intervals (d_intervals). 
+	///			remove_overlaps method: This method removes overlapping intervals from the given collection of intervals.
+	///			find_overlaps method : This method finds intervals in the tree that overlap with a given interval i.
+	/// </summary>
 	template<typename T>
 	class interval_tree {
 	public:
@@ -232,7 +254,16 @@ namespace aho_corasick {
 		}
 	};
 
-	// class emit
+	/// <summary>
+	///		The emit class is a representation of an emitted token or substring found during text parsing.
+	///		The emitted substring will be registered by it's interval [start_idx, end_idx].
+	///		The emit list (d_emits) is stored at the end of string (terminal nodes).
+	///		Note:
+	///			For multiple insertion of the *same* string, the TRIE doesn't change, but the emit list *does*.
+	///			This means that if the TRIE had the string: d -> o -> g -> $ [d_emits: ['dog']]
+	///			After second insertion of the string 'dog': d -> o -> g -> $ [d_emits: ['dog', 'dog']]
+	///			THIS INFORMATION AFFECTS THE TRIE SIZE AND IS CALCULATED AS PERIPHERAL.
+	/// </summary>
 	template<typename CharType>
 	class emit: public interval {
 	public:
@@ -257,7 +288,9 @@ namespace aho_corasick {
 		bool is_empty() const { return (get_start() == -1 && get_end() == -1); }
 	};
 
-	// class token
+	/// <summary>
+	///		The token class represents a token generated during text parsing.
+	/// </summary>
 	template<typename CharType>
 	class token {
 	public:
@@ -291,7 +324,9 @@ namespace aho_corasick {
 		emit_type get_emit() const { return d_emit; }
 	};
 
-	// class state
+	/// <summary>
+	/// A class representing a State in the aho-corasick automaton (trie tree).
+	/// </summary>
 	template<typename CharType>
 	class state {
 	public:
@@ -307,9 +342,14 @@ namespace aho_corasick {
 	private:
 		size_t                         d_depth;
 		ptr                            d_root;
-		std::map<CharType, unique_ptr> d_success;
+		std::map<CharType, unique_ptr> d_success;		// Effective list of transitions and chars
+														// For every state in the automaton:
+														//		map: {char_of_next_state(s) : ptr_to_follow_up_state}
+														//		Bla => ['B', ptr_B] -> ['l', ptr_l] -> ['a', ptr_a]
+														//		map_item.first = the char of the state
+														//		map_item.second = the ptr to the state
 		ptr                            d_failure;
-		string_collection              d_emits;
+		string_collection              d_emits;			// Emits, list of full keywords stored in terminal nodes
 
 	public:
 		state(): state(0) {}
@@ -320,6 +360,39 @@ namespace aho_corasick {
 			, d_success()
 			, d_failure(nullptr)
 			, d_emits() {}
+
+		/// <summary>
+		/// Returns the size of a node in Bytes.
+		///	Usage:
+		///		.get_size() - returns node size without emits list or peripherals
+		///		.get_size(true) - returns node size with emits list but without peripherals
+		///		.get_size(true, true) - returns full node size with emits list and peripherals
+		/// </summary>
+		/// <param name="include_emits">A Boolean to determine whether or not to calculate a node's emit list in the total size.</param>
+		/// <param name="include_peripherals">A Boolean to determine whether or not to calculate a node's peripherals in the total size.</param>
+		/// <returns></returns>
+		size_t get_size(bool include_emits = false, bool include_peripherals = false) const {
+			size_t calculated_size = 0;
+			
+			size_t map_element = sizeof(CharType) + sizeof(unique_ptr);
+			size_t num_of_map_elements = d_success.size();
+
+			calculated_size += map_element * num_of_map_elements;
+			
+			if (include_peripherals) {
+				calculated_size += sizeof(d_depth) + sizeof(d_root) + sizeof(d_failure);
+			}
+
+			if (include_emits) {
+				for (auto e : d_emits) {
+					calculated_size += sizeof(e.second);
+					for (CharType c : e.first) {
+						calculated_size += sizeof(CharType);
+					}
+				}
+			}
+			return calculated_size;
+		}
 
 		ptr next_state(CharType character) const {
 			return next_state(character, false);
@@ -386,19 +459,27 @@ namespace aho_corasick {
 		}
 	};
 
+
+	/// <summary>
+	///		A class that implements the Aho-Corasick automaton using a TRIE tree skeleton.
+	///		aho_corasick::trie is defined as basic_trie<char>.
+	///		Note: CharType has to be of types char: {char, wchar_t, char32_t, char64_t,...}.
+	///			  Use std::basic_string to deal with strings that has NPSCs (Non Printable and Special Characters).
+	/// </summary>
+	/// <typeparam name="CharType"></typeparam>
 	template<typename CharType>
 	class basic_trie {
 	public:
-		using string_type = std::basic_string < CharType > ;
+		using string_type = std::basic_string < CharType >;
 		using string_ref_type = std::basic_string<CharType>&;
 
 		typedef state<CharType>         state_type;
-		typedef state<CharType>*        state_ptr_type;
+		typedef state<CharType>*		state_ptr_type;
 		typedef token<CharType>         token_type;
 		typedef emit<CharType>          emit_type;
 		typedef std::vector<token_type> token_collection;
 		typedef std::vector<emit_type>  emit_collection;
-		typedef basic_trie<CharType>	my_type;
+		typedef basic_trie<CharType>	this_trie_type;
 
 		class config {
 			bool d_allow_overlaps;
@@ -407,9 +488,9 @@ namespace aho_corasick {
 
 		public:
 			config()
-				: d_allow_overlaps(true)
-				, d_only_whole_words(false)
-				, d_case_insensitive(false) {}
+				: d_allow_overlaps(DEFAULT_OVERLAPS)
+				, d_only_whole_words(DEFAULT_WHOLE_WORDS)
+				, d_case_insensitive(DEFAULT_INSENSITIVE) {}
 
 			bool is_allow_overlaps() const { return d_allow_overlaps; }
 			void set_allow_overlaps(bool val) { d_allow_overlaps = val; }
@@ -429,7 +510,7 @@ namespace aho_corasick {
 		mutable std::mutex			d_mutex;
 
 	public:
-		basic_trie(): basic_trie(config()) {}
+		basic_trie() : basic_trie(config()) {}
 
 		basic_trie(const config& c)
 			: d_root(new state_type())
@@ -485,7 +566,12 @@ namespace aho_corasick {
 			}
 			return token_collection(tokens);
 		}
-
+		
+		/// <summary>
+		/// Scans the aho_corasick TRIE for a text and returns the list of emits (strings) that were found
+		/// </summary>
+		/// <param name="text">A text to find exact matches on using the aho_corasick automaton</param>
+		/// <returns>An std::vector of the emits (strings with relevant intervals) found</returns>
 		emit_collection parse_text(string_type text) const {
 			check_construct_failure_states();
 			size_t pos = 0;
@@ -508,6 +594,23 @@ namespace aho_corasick {
 				collected_emits.swap(tmp);
 			}
 			return emit_collection(collected_emits);
+		}
+
+		/// <summary>
+		/// Traverse the Aho Corasick TRIE tree to 
+		/// </summary>
+		/// <param name="include_emits">A Boolean to determine whether or not to calculate a node's emit list in the total size.</param>
+		/// <param name="include_peripherals">A Boolean to determine whether or not to calculate a node's peripherals in the total size.</param>
+		/// <param name="print">A Boolean to determine whether or not to print the emits when traversing the tree</param>
+		/// <returns></returns>
+		size_t traverse_tree(bool include_emits = false, bool include_peripherals = false, bool print = false) const {
+			size_t size = 0;
+			this->traverse_tree_aux(d_root.get(), &size, include_emits, include_peripherals, print);
+			return size;
+		}
+
+		size_t getNumKeywords() const {
+			return this->d_num_keywords;
 		}
 
 	private:
@@ -560,7 +663,7 @@ namespace aho_corasick {
 				std::unique_lock<std::mutex> lock(d_mutex);
 				constructed = d_constructed_failure_states.load(std::memory_order_relaxed);
 				if(!constructed) {
-					const_cast<my_type*>(this)->construct_failure_states();
+					const_cast<this_trie_type*>(this)->construct_failure_states();
 				}
 			}
 		}
@@ -599,6 +702,46 @@ namespace aho_corasick {
 					auto emit_str = typename emit_type::string_type(str.first);
 					collected_emits.push_back(emit_type(pos - emit_str.size() + 1, pos, emit_str, str.second));
 				}
+			}
+		}
+
+
+		/// <summary>
+		/// An Auxiliary function that recursively traverse the TRIE tree in pre-orderly manner.
+		/// </summary>
+		/// <param name="node">Node to inspect</param>
+		/// <param name="size_ptr">A pointer to a paramter that holds the sum value of the tree size in Bytes</param>
+		/// <param name="include_emits">A Boolean to determine whether or not to calculate a node's emit list in the total size.</param>
+		/// <param name="include_peripherals">A Boolean to determine whether or not to calculate a node's peripherals in the total size.</param>
+		/// <param name="print">A Boolean to determine whether or not to print the emits when traversing the tree</param>
+		void traverse_tree_aux(const typename basic_trie<CharType>::state_ptr_type& node, size_t* size_ptr,
+			bool include_emits = false, bool include_peripherals = false, bool print = false) const {
+			
+			// Stop condition: NULLPTR (no further sons / transitions to node)
+			if (!node) {
+				return;
+			}
+			
+			// Pre-Order traversal (NLR): First apply function (sum) on Node, then call children Left to Right.
+			*size_ptr += node->get_size(include_emits, include_peripherals);
+			
+			// Print the current state's or node's details (emits list <=> terminal node)
+			if (print) {
+				std::cout << "Emits: ";
+				for (const auto& emit : node->get_emits()) {
+					std::cout << emit.first << " ";
+				}
+				std::cout << std::endl;
+			}
+
+			// Recursively traverse child states
+			for (const auto& transition : node->get_transitions()) {
+				// Print transitions (chars of next states in TRIE)
+				if (print) {
+					std::cout << transition << ",  ";
+				}
+				auto child_state = node->next_state(transition);
+				this->traverse_tree_aux(child_state, size_ptr, include_emits, include_peripherals);
 			}
 		}
 	};
